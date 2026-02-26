@@ -173,6 +173,9 @@ class ServerState:
             "packets": 0,
             "bytes": 0,
             "decoded_samples": 0,
+            "power_samples": 0,
+            "power_sum_sq": 0.0,
+            "power_peak": 0.0,
             "last_packet_ts": time.time(),
             "last_decode_ts": time.time(),
             "last_rx_log_ts": time.time(),
@@ -255,16 +258,42 @@ class ServerState:
                     continue
                 mic_stats["decoded_samples"] += int(pcm.shape[-1])
                 mic_stats["last_decode_ts"] = time.time()
+                pcm_f32 = np.asarray(pcm, dtype=np.float32)
+                abs_pcm = np.abs(pcm_f32)
+                mic_stats["power_samples"] += int(pcm_f32.size)
+                mic_stats["power_sum_sq"] += float(np.square(pcm_f32).sum())
+                if pcm_f32.size > 0:
+                    mic_stats["power_peak"] = max(
+                        mic_stats["power_peak"],
+                        float(abs_pcm.max()),
+                    )
                 if mic_stats["last_decode_ts"] - mic_stats["last_decode_log_ts"] > 2.0:
                     sec = mic_stats["decoded_samples"] / float(self.mimi.sample_rate)
+                    if mic_stats["power_samples"] > 0:
+                        rms = (mic_stats["power_sum_sq"] / mic_stats["power_samples"]) ** 0.5
+                        dbfs = 20.0 * np.log10(max(rms, 1e-12))
+                        peak = mic_stats["power_peak"]
+                    else:
+                        rms, dbfs, peak = 0.0, -240.0, 0.0
                     clog.log(
                         "info",
                         (
                             "client mic decoded: "
                             f"samples={mic_stats['decoded_samples']} "
-                            f"seconds={sec:.2f}"
+                            f"seconds={sec:.2f} "
+                            f"rms={rms:.6f} "
+                            f"peak={peak:.6f} "
+                            f"dbfs={dbfs:.1f}"
                         ),
                     )
+                    if dbfs < -55.0:
+                        clog.log(
+                            "warning",
+                            "client mic level is very low (possible muted mic/silence).",
+                        )
+                    mic_stats["power_samples"] = 0
+                    mic_stats["power_sum_sq"] = 0.0
+                    mic_stats["power_peak"] = 0.0
                     mic_stats["last_decode_log_ts"] = mic_stats["last_decode_ts"]
                 if all_pcm_data is None:
                     all_pcm_data = pcm
