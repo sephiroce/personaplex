@@ -15,7 +15,7 @@ WORKDIR /app/moshi/
 
 COPY moshi/ /app/moshi/
 RUN uv venv /app/moshi/.venv --python 3.12
-RUN uv sync
+RUN uv sync --python /app/moshi/.venv/bin/python --no-dev
 
 RUN mkdir -p /app/ssl
 

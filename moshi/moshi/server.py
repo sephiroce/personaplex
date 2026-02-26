@@ -169,6 +169,16 @@ class ServerState:
                 self.lm_gen.load_voice_prompt(voice_prompt_path)
         self.lm_gen.text_prompt_tokens = self.text_tokenizer.encode(wrap_with_system_tags(request.query["text_prompt"])) if len(request.query["text_prompt"]) > 0 else None
         seed = int(request["seed"]) if "seed" in request.query else None
+        mic_stats = {
+            "packets": 0,
+            "bytes": 0,
+            "decoded_samples": 0,
+            "last_packet_ts": time.time(),
+            "last_decode_ts": time.time(),
+            "last_rx_log_ts": time.time(),
+            "last_decode_log_ts": time.time(),
+            "last_no_audio_warn_ts": 0.0,
+        }
 
         async def recv_loop():
             nonlocal close
@@ -194,6 +204,25 @@ class ServerState:
                     kind = message[0]
                     if kind == 1:  # audio
                         payload = message[1:]
+                        mic_stats["packets"] += 1
+                        mic_stats["bytes"] += len(payload)
+                        mic_stats["last_packet_ts"] = time.time()
+                        now = mic_stats["last_packet_ts"]
+                        if (
+                            now - mic_stats["last_rx_log_ts"] > 2.0
+                            or mic_stats["packets"] % 100 == 0
+                        ):
+                            avg = mic_stats["bytes"] / max(1, mic_stats["packets"])
+                            clog.log(
+                                "info",
+                                (
+                                    "client mic rx: "
+                                    f"packets={mic_stats['packets']} "
+                                    f"bytes={mic_stats['bytes']} "
+                                    f"avg_packet={avg:.1f}"
+                                ),
+                            )
+                            mic_stats["last_rx_log_ts"] = now
                         opus_reader.append_bytes(payload)
                     else:
                         clog.log("warning", f"unknown message kind {kind}")
@@ -210,7 +239,33 @@ class ServerState:
                 await asyncio.sleep(0.001)
                 pcm = opus_reader.read_pcm()
                 if pcm.shape[-1] == 0:
+                    now = time.time()
+                    if (
+                        now - mic_stats["last_packet_ts"] > 5.0
+                        and now - mic_stats["last_no_audio_warn_ts"] > 5.0
+                    ):
+                        clog.log(
+                            "warning",
+                            (
+                                "no decodable mic audio for >5s "
+                                "(socket alive, waiting for client audio)"
+                            ),
+                        )
+                        mic_stats["last_no_audio_warn_ts"] = now
                     continue
+                mic_stats["decoded_samples"] += int(pcm.shape[-1])
+                mic_stats["last_decode_ts"] = time.time()
+                if mic_stats["last_decode_ts"] - mic_stats["last_decode_log_ts"] > 2.0:
+                    sec = mic_stats["decoded_samples"] / float(self.mimi.sample_rate)
+                    clog.log(
+                        "info",
+                        (
+                            "client mic decoded: "
+                            f"samples={mic_stats['decoded_samples']} "
+                            f"seconds={sec:.2f}"
+                        ),
+                    )
+                    mic_stats["last_decode_log_ts"] = mic_stats["last_decode_ts"]
                 if all_pcm_data is None:
                     all_pcm_data = pcm
                 else:

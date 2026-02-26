@@ -110,6 +110,7 @@ export const Conversation:FC<ConversationProps> = ({
   const micDuration = useRef<number>(0);
   const actualAudioPlayed = useRef<number>(0);
   const textContainerRef = useRef<HTMLDivElement>(null);
+  const [userText, setUserText] = useState<string[]>([]);
   const textSeed = useMemo(() => Math.round(1000000 * Math.random()), []);
   const audioSeed = useMemo(() => Math.round(1000000 * Math.random()), []);
 
@@ -158,6 +159,12 @@ export const Conversation:FC<ConversationProps> = ({
       stop();
     };
   }, [start, workerAuthId]);
+
+  useEffect(() => {
+    if (socketStatus !== "connected") {
+      setUserText([]);
+    }
+  }, [socketStatus]);
 
   const startRecording = useCallback(() => {
     if(isRecording.current) {
@@ -270,13 +277,18 @@ export const Conversation:FC<ConversationProps> = ({
                 }
                 theme={theme}
               />
-              <UserAudio theme={theme}/>
+              <UserAudio
+                theme={theme}
+                onUserText={(line) => {
+                  setUserText((previous) => [...previous, line]);
+                }}
+              />
               <div className="pt-8 text-sm flex justify-center items-center flex-col download-links">
                 {audioURL && <div><a href={audioURL} download={`personaplex_audio.${getExtension("audio")}`} className="pt-2 text-center block">Download audio</a></div>}
               </div>
           </div>
           <div className="scrollbar player-text" ref={textContainerRef}>
-            <TextDisplay containerRef={textContainerRef}/>
+            <TextDisplay containerRef={textContainerRef} userText={userText}/>
           </div>
           <div className="player-stats hidden md:block">
             <ServerAudioStats getAudioStats={getAudioStats} />
